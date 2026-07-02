@@ -1,57 +1,139 @@
-# yt-transcript
+# yt-playlist-transcripts
 
-Extract YouTube playlist transcripts into markdown files for later reading and cleanup.
+[![CI](https://github.com/mattheogim/yt-playlist-transcripts/actions/workflows/ci.yml/badge.svg)](https://github.com/mattheogim/yt-playlist-transcripts/actions/workflows/ci.yml)
 
-Backend: `yt-dlp`. Output is one `.md` per video (readable, grouped into blocks) plus
-a `.raw.json` sidecar that preserves the original timestamped segments verbatim.
+Extract every transcript in a YouTube playlist into clean, timestamped markdown.
 
-## Design principles
+One command per playlist. For each video you get a readable `.md` (grouped into
+timestamped blocks, split on YouTube chapters when they exist) plus a
+`.raw.json` sidecar preserving the original caption segments verbatim. A
+`manifest.json` accounts for every video in the playlist — including the ones
+that failed or had no captions — and a generated `README.md` indexes it all.
 
-1. **Preserve original aggressively.** v0 does not edit a single word. Block grouping is
-   the only transformation applied to the markdown body. Raw segments stay in
-   `.raw.json` for any future cleanup pass to diff against.
-2. **Native captions only.** Manual creator-uploaded subtitles take priority. If a
-   video only has auto-translated tracks (URL contains `tlang=`), it is skipped — those
-   are double-machine-processed and not the creator's voice.
-3. **Account for every video.** The manifest records every playlist entry with one of
-   8 statuses (`done`, `skipped_no_transcript`, `skipped_existing`, `failed_*`).
-   `README.md` is generated from the manifest with counts and a per-video table.
-4. **Resume-friendly.** Re-running skips videos with existing `.md` unless `--force`.
+Backend: [yt-dlp](https://github.com/yt-dlp/yt-dlp). No YouTube API key needed.
+
+## Status
+
+- **Working.** Built for and used on an 86-video lecture playlist; every video
+  accounted for, coverage verified with the built-in `verify` command.
+- **Not on PyPI yet** — install from GitHub (below).
+- Pre-1.0: CLI flags and output format may still change.
+- YouTube rate-limits aggressive fetching. The tool downloads only the one
+  caption track it needs per video, jitters between videos, retries with
+  backoff, and records rate-limit failures in the manifest so you can resume.
 
 ## Quick start
 
-```bash
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-
-.venv/bin/python extract.py "https://www.youtube.com/playlist?list=YOUR_LIST_ID" \
-  --langs en
-```
-
-Output goes to `~/yt-transcript/output/<playlist_id>/` by default. Use `-o` to override.
-
-### Options
-
-- `--langs en,ko` — language priority (manual takes precedence over auto)
-- `--force` — overwrite existing `.md`
-- `--limit N` — process only first N videos (for testing)
-- `--start N` — start at playlist index N (1-based)
-- `--delay-min` / `--delay-max` — jitter between videos (default 0.5–2.0s)
-
-## Regenerate `.md` from `.raw.json`
-
-If block-splitting or cleanup logic changes, refresh the markdown without
-calling YouTube again:
+With [pipx](https://pipx.pypa.io/) (recommended):
 
 ```bash
-.venv/bin/python regen.py output/<playlist_id>
+pipx install git+https://github.com/mattheogim/yt-playlist-transcripts.git
+
+yt-playlist-transcripts "https://www.youtube.com/playlist?list=<PLAYLIST_ID>" --limit 3
 ```
+
+`<PLAYLIST_ID>` is the `list=` parameter of any YouTube playlist URL. `--limit 3`
+processes just the first 3 videos so you can check the output before committing
+to a full run; drop it when you're happy.
+
+Or from a clone:
+
+```bash
+git clone https://github.com/mattheogim/yt-playlist-transcripts.git
+cd yt-playlist-transcripts
+python3 -m venv .venv && .venv/bin/pip install -e .
+
+.venv/bin/yt-playlist-transcripts "https://www.youtube.com/playlist?list=<PLAYLIST_ID>" --limit 3
+```
+
+Requires Python 3.10+.
+
+Output goes to `./output/<playlist_id>/` by default (use `-o` to override):
+
+```
+output/<playlist_id>/
+  README.md                 # generated index: counts + per-video status table
+  manifest.json             # status for every playlist entry (resume state)
+  01-<videoid>-<slug>.md    # readable transcript, timestamped blocks
+  01-<videoid>-<slug>.raw.json  # original caption segments, verbatim
+  02-...
+```
+
+## Example output
+
+Each `.md` looks like this (shortened):
+
+```markdown
+---
+video_id: aBcDeFgHiJk
+title: Lecture 1 — Introduction
+channel: Example Channel
+duration_sec: 512
+url: https://www.youtube.com/watch?v=aBcDeFgHiJk
+playlist_index: 1
+source: auto
+language_code: en
+is_generated: true
+block_count: 9
+segment_count: 214
+---
+
+# Lecture 1 — Introduction
+
+**Channel**: Example Channel
+**URL**: https://www.youtube.com/watch?v=aBcDeFgHiJk
+**Source**: auto (en)
+
+## Transcript
+
+_Source: **auto** (en). 9 blocks, 214 raw segments. Sentence boundaries NOT
+inferred — 75s max-block. Raw segments preserved in `01-aBcDeFgHiJk-lecture-1-introduction.raw.json`._
+
+### [00:00]
+
+welcome to the course in this first lecture we're going to define the basic
+model and walk through a simple example so let's start with the setup ...
+
+### [01:12]
+
+now the key assumption here is that both players move at the same time ...
+```
+
+Videos with YouTube chapters get one block per chapter, with the chapter title
+in the block header (`### [04:30] The Setup`).
+
+## Commands
+
+### `yt-playlist-transcripts <url>` (extract — the default)
+
+| Flag | Meaning |
+|------|---------|
+| `-o, --output DIR` | Output directory (default `./output/<playlist_id>`) |
+| `--langs en,ko` | Caption language priority; manual tracks beat auto tracks |
+| `--limit N` | Process only the first N videos |
+| `--start N` | Start at playlist index N (1-based) |
+| `--force` | Overwrite existing `.md` files |
+| `--delay-min` / `--delay-max` | Jitter between videos (default 0.5–2.0s) |
+
+Re-running is safe: videos with an existing `.md` are skipped unless `--force`.
+
+### `yt-playlist-transcripts regen <output_dir>`
+
+Rebuild all `.md` files from their `.raw.json` sidecars without touching
+YouTube — useful when the block-splitting logic changes.
+
+### `yt-playlist-transcripts verify <output_dir>`
+
+Coverage and structure checks: flags transcripts that end well before the
+video's duration, chapter/block count mismatches, and word-count drift between
+the raw segments and the rendered markdown. Exits non-zero if anything is
+flagged.
 
 ## How block splitting works
 
-Sentence boundaries are not inferred for ASR text. Blocks are split on:
+Sentence boundaries are **not** inferred for ASR text. Blocks split on:
 
-- **Chapter starts** when YouTube chapters exist (typically the most useful boundary)
+- **Chapter starts** when YouTube chapters exist (usually the most useful boundary)
 - **Pauses ≥ 2.5s** between cues (only for non-rolling sources — pause data is
   meaningless after rolling-dedup)
 - **75s max-block** as a hard cap
@@ -61,17 +143,22 @@ zero-duration cue, then re-emitted in the next cue alongside the previous line
 still on screen. The dedup keeps only the zero-duration cues, which carry each
 fresh line exactly once.
 
-## File layout
+## Design principles
 
-```
-extract.py         # main extractor (~660 lines)
-regen.py           # rebuild .md from .raw.json without yt-dlp
-requirements.txt
-output/<id>/
-  README.md        # generated: index + counts + per-video table
-  manifest.json    # generated: status for every playlist video
-  NN-<id>-<slug>.md       # readable, blocks
-  NN-<id>-<slug>.raw.json # original timestamped segments (verbatim)
-```
+1. **Preserve the original aggressively.** Not a single word is edited. Block
+   grouping is the only transformation applied to the markdown body; raw
+   segments stay in `.raw.json` for any future cleanup pass to diff against.
+2. **Native captions only.** Manual creator-uploaded subtitles take priority.
+   Auto-translated tracks (URL contains `tlang=`) are skipped — those are
+   double-machine-processed and not the creator's voice.
+3. **Account for every video.** The manifest records every playlist entry with
+   one of 8 statuses (`done`, `skipped_no_transcript`, `skipped_existing`,
+   `failed_*`). The generated index shows counts and a per-video table.
+4. **Resume-friendly.** Re-running skips already-extracted videos; failures are
+   recorded, not fatal.
 
-`output/` is gitignored — transcripts are creator content, kept local.
+Transcripts are creator content — `output/` is gitignored and stays local.
+
+## License
+
+[MIT](LICENSE)
