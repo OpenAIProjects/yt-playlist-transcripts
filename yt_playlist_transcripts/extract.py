@@ -543,16 +543,20 @@ def existing_md_for(video_id: str, output_dir: Path) -> Path | None:
 # ---------------------------------------------------------------------------
 # Main
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
-        description="Extract YouTube playlist transcripts into markdown."
+        description="Extract YouTube playlist transcripts into markdown.",
+        epilog=(
+            "Subcommands: 'regen <dir>' rebuilds .md from .raw.json sidecars; "
+            "'verify <dir>' runs coverage/structure checks."
+        ),
     )
     p.add_argument("url", help="Playlist URL (or video URL with list= param)")
     p.add_argument(
         "-o",
         "--output",
         default=None,
-        help="Output directory (default: ~/yt-transcript/output/<playlist_id>)",
+        help="Output directory (default: ./output/<playlist_id>)",
     )
     p.add_argument(
         "--langs",
@@ -566,7 +570,7 @@ def main() -> int:
     p.add_argument("--start", type=int, default=1, help="Start at this playlist index (1-based)")
     p.add_argument("--delay-min", type=float, default=0.5)
     p.add_argument("--delay-max", type=float, default=2.0)
-    args = p.parse_args()
+    args = p.parse_args(argv)
 
     langs = [s.strip() for s in args.langs.split(",") if s.strip()]
     if not langs:
@@ -588,7 +592,7 @@ def main() -> int:
     output_dir = (
         Path(args.output).expanduser().resolve()
         if args.output
-        else Path.home() / "yt-transcript" / "output" / pl_id
+        else Path.cwd() / "output" / pl_id
     )
     output_dir.mkdir(parents=True, exist_ok=True)
     work_dir = output_dir / ".work"

@@ -133,13 +133,13 @@ def check_one(md_path: Path, raw_path: Path) -> list[dict]:
     return issues
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         description="Verify coverage and structure of extracted transcripts."
     )
     p.add_argument("output_dir", help="Directory with .md and .raw.json files")
     p.add_argument("--quiet", action="store_true", help="Print only issues")
-    args = p.parse_args()
+    args = p.parse_args(argv)
 
     out = Path(args.output_dir).expanduser().resolve()
     raws = sorted(out.glob("*.raw.json"))

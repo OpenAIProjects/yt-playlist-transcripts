@@ -12,7 +12,7 @@ from pathlib import Path
 
 import yaml
 
-import extract
+from . import extract
 
 
 def regen_one(md_path: Path, raw_path: Path) -> tuple[int, int, bool]:
@@ -127,7 +127,7 @@ def regen_one(md_path: Path, raw_path: Path) -> tuple[int, int, bool]:
     return len(blocks), len(raw_segments), rolling
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         description="Regenerate .md files from .raw.json sidecars (no yt-dlp calls)."
     )
@@ -137,7 +137,7 @@ def main() -> int:
         default=None,
         help="Only regen videos with this source (manual|auto). Default: all.",
     )
-    args = p.parse_args()
+    args = p.parse_args(argv)
 
     output_dir = Path(args.output_dir).expanduser().resolve()
     if not output_dir.is_dir():
