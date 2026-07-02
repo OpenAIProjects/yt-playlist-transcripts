@@ -9,3 +9,8 @@ output/
 
 # bundled zip artifacts (rebuild from output/)
 *.zip
+
+# packaging build artifacts
+build/
+dist/
+*.egg-info/
