@@ -6,6 +6,7 @@ __pycache__/
 
 # generated transcripts (creator content — kept local, not committed)
 output/
+/transcripts/@*/
 
 # bundled zip artifacts (rebuild from output/)
 *.zip

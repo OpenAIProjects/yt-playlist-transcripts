@@ -198,10 +198,13 @@ so upload dates are available; entries with no usable upload date are listed
 as failures instead of being silently included or excluded.
 
 PowerShell supports `-OutputDirectory`, `-Langs`, `-Limit`, `-DelayMin`,
-`-DelayMax`, `-Since`, and `-Force`. The Bash wrapper and Python runner support
+`-DelayMax`, `-Since`, and `-Force`; it also forwards additional Python-style
+flags such as `--limit 3`. Long flags are case-insensitive (`--Limit` and
+`--limit` are equivalent). The Bash wrapper and Python runner support
 `--output`, `--langs`, `--limit`, `--delay-min`, `--delay-max`, `--since`, and
 `--force`. Without an explicit output directory, files go to
-`output/<channel-handle>/`. The pipeline writes `INDEX.md`, `FAILURES.md`,
+`transcripts/@<channel-handle>/` (for example, `transcripts/@example/`). The
+pipeline writes `INDEX.md`, `FAILURES.md`,
 `RESEARCH.md`, and individual summaries under `summaries/`. Failed Codex
 summaries are retried on the next run; `-Force` / `--force` re-extracts
 transcripts and regenerates summaries.
@@ -234,7 +237,8 @@ fresh line exactly once.
 4. **Resume-friendly.** Re-running skips already-extracted videos; failures are
    recorded, not fatal.
 
-Transcripts are creator content — `output/` is gitignored and stays local.
+Transcripts are creator content — generated files under `output/` and
+`transcripts/@*/` are gitignored and stay local.
 
 ## License
 

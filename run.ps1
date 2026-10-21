@@ -9,7 +9,10 @@ param(
     [int] $Limit,
     [double] $DelayMin = 0.5,
     [double] $DelayMax = 2.0,
-    [switch] $Force
+    [switch] $Force,
+
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]] $AdditionalArgs
 )
 
 $ErrorActionPreference = 'Stop'
@@ -35,6 +38,7 @@ if ($OutputDirectory) { $argsForRunner += @('--output', $OutputDirectory) }
 if ($Limit -gt 0) { $argsForRunner += @('--limit', "$Limit") }
 if ($Since) { $argsForRunner += @('--since', $Since) }
 if ($Force) { $argsForRunner += '--force' }
+if ($AdditionalArgs) { $argsForRunner += $AdditionalArgs }
 
 Push-Location $repoRoot
 $previousLauncher = $env:YT_RESEARCH_LAUNCHER

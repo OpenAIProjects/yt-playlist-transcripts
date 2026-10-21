@@ -18,7 +18,10 @@ def channel_folder(url: str) -> str:
     parts = [unquote(part) for part in urlparse(url).path.split("/") if part]
     if parts and parts[-1].lower() == "videos":
         parts.pop()
-    value = parts[-1].lstrip("@") if parts else "channel"
+    value = parts[-1] if parts else "channel"
+    if value.startswith("@"):
+        handle = re.sub(r"[^A-Za-z0-9._-]+", "-", value[1:]).strip("-._")
+        return f"@{handle}" if handle else "channel"
     value = re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-._")
     return value or "channel"
 
@@ -30,6 +33,17 @@ def normalize_channel(value: str) -> str:
         handle = value.strip("/")
         return f"https://www.youtube.com/{handle}/videos"
     return value
+
+
+def normalize_long_options(argv: list[str]) -> list[str]:
+    """Make GNU-style long option names case-insensitive, preserving values."""
+    normalized = []
+    for token in argv:
+        if token.startswith("--"):
+            option, separator, value = token.partition("=")
+            token = option.lower() + separator + value
+        normalized.append(token)
+    return normalized
 
 
 def load_manifest(path: Path) -> dict:
@@ -142,7 +156,7 @@ def write_failures(output: Path, manifest: dict, errors: list[tuple[str, str]]) 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--channel", required=True, help="YouTube channel /videos URL or @handle")
-    parser.add_argument("--output", type=Path, help="Output folder (default: output/<channel>)")
+    parser.add_argument("--output", type=Path, help="Output folder (default: transcripts/@<channel-handle>)")
     parser.add_argument("--langs", default="en,ko", help="Caption language priority")
     parser.add_argument("--limit", type=int, help="Process only the first N videos")
     parser.add_argument("--delay-min", type=float, default=0.5)
@@ -154,7 +168,7 @@ def main() -> int:
         help="Include videos uploaded on/after YYYY-MM-DD or a day offset (-1=yesterday, 0=today)",
     )
     parser.add_argument("--force", action="store_true", help="Re-extract transcripts and regenerate summaries")
-    args = parser.parse_args()
+    args = parser.parse_args(normalize_long_options(sys.argv[1:]))
     args.channel = normalize_channel(args.channel)
 
     launcher = os.environ.get("YT_RESEARCH_LAUNCHER")
@@ -168,8 +182,9 @@ def main() -> int:
     print("Options: --since filters inclusively by upload date; negative day offsets count back from today (-1 yesterday, 0 today). --output sets the result folder; --langs sets caption priority; --limit caps videos; --force re-extracts and regenerates summaries.", flush=True)
 
     root = Path(__file__).resolve().parent
-    output = (args.output or (root / "output" / channel_folder(args.channel))).expanduser().resolve()
+    output = (args.output or (root / "transcripts" / channel_folder(args.channel))).expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
+    print(f"Output directory: {output}", flush=True)
     summaries = output / "summaries"
 
     print(f"[1/6] Discovering channel videos and extracting transcripts: {args.channel}", flush=True)
