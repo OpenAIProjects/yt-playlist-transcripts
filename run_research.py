@@ -23,6 +23,15 @@ def channel_folder(url: str) -> str:
     return value or "channel"
 
 
+def normalize_channel(value: str) -> str:
+    """Expand a YouTube @handle shorthand into its channel videos URL."""
+    value = value.strip()
+    if value.startswith("@"):
+        handle = value.strip("/")
+        return f"https://www.youtube.com/{handle}/videos"
+    return value
+
+
 def load_manifest(path: Path) -> dict:
     if not path.is_file():
         raise RuntimeError(f"Transcript extractor did not create {path}")
@@ -132,7 +141,7 @@ def write_failures(output: Path, manifest: dict, errors: list[tuple[str, str]]) 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--channel", required=True, help="YouTube channel /videos URL")
+    parser.add_argument("--channel", required=True, help="YouTube channel /videos URL or @handle")
     parser.add_argument("--output", type=Path, help="Output folder (default: output/<channel>)")
     parser.add_argument("--langs", default="en,ko", help="Caption language priority")
     parser.add_argument("--limit", type=int, help="Process only the first N videos")
@@ -146,14 +155,15 @@ def main() -> int:
     )
     parser.add_argument("--force", action="store_true", help="Re-extract transcripts and regenerate summaries")
     args = parser.parse_args()
+    args.channel = normalize_channel(args.channel)
 
     launcher = os.environ.get("YT_RESEARCH_LAUNCHER")
     if launcher == "powershell":
-        usage = r"Usage: .\run.ps1 -Channel <channel-url> [-Since <YYYY-MM-DD|-1|0>] [-OutputDirectory <dir>] [-Limit N] [-Force]"
+        usage = r"Usage: .\run.ps1 -Channel <channel-url|@handle> [-Since <YYYY-MM-DD|-1|0>] [-OutputDirectory <dir>] [-Limit N] [-Force]"
     elif launcher == "bash":
-        usage = "Usage: bash ./run.sh --channel <channel-url> [--since YYYY-MM-DD|-1|0] [--output DIR] [--limit N] [--force]"
+        usage = "Usage: bash ./run.sh --channel <channel-url|@handle> [--since YYYY-MM-DD|-1|0] [--output DIR] [--limit N] [--force]"
     else:
-        usage = "Usage: python run_research.py --channel <channel-url> [--since YYYY-MM-DD|-1|0] [--output DIR] [--limit N] [--force]"
+        usage = "Usage: python run_research.py --channel <channel-url|@handle> [--since YYYY-MM-DD|-1|0] [--output DIR] [--limit N] [--force]"
     print(usage, flush=True)
     print("Options: --since filters inclusively by upload date; negative day offsets count back from today (-1 yesterday, 0 today). --output sets the result folder; --langs sets caption priority; --limit caps videos; --force re-extracts and regenerates summaries.", flush=True)
 

@@ -149,6 +149,12 @@ PowerShell:
 .\run.ps1 -Channel "https://www.youtube.com/@example/videos"
 ```
 
+You can also pass just the channel handle:
+
+```powershell
+.\run.ps1 -Channel "@example"
+```
+
 For example, set a custom output folder and cap the run at five videos:
 
 ```powershell
@@ -160,6 +166,12 @@ Bash:
 
 ```bash
 bash ./run.sh --channel "https://www.youtube.com/@example/videos"
+```
+
+The short form works here too:
+
+```bash
+bash ./run.sh --channel "@example"
 ```
 
 The Bash wrapper accepts the same options as the Python runner:
@@ -176,12 +188,14 @@ python run_research.py --channel "https://www.youtube.com/@example/videos" \
   --since 2026-10-19 --output ./output/example --limit 5
 ```
 
-`-Since` / `--since` includes videos uploaded on or after the given date. Supply
-an ISO date (`2026-10-19`) or an integer offset from today: `-1` means
-yesterday, `0` means today, and `-7` means seven days ago. Date filtering fully
-resolves channel video metadata so upload dates are available; entries with no
-usable upload date are listed as failures instead of being silently included
-or excluded.
+The `--channel` / `-Channel` value can be a `/videos` URL or a shorthand such
+as `@example`; the runner expands the shorthand to
+`https://www.youtube.com/@example/videos`. `-Since` / `--since` includes
+videos uploaded on or after the given date. Supply an ISO date (`2026-10-19`)
+or an integer offset from today: `-1` means yesterday, `0` means today, and
+`-7` means seven days ago. Date filtering fully resolves channel video metadata
+so upload dates are available; entries with no usable upload date are listed
+as failures instead of being silently included or excluded.
 
 PowerShell supports `-OutputDirectory`, `-Langs`, `-Limit`, `-DelayMin`,
 `-DelayMax`, `-Since`, and `-Force`. The Bash wrapper and Python runner support
