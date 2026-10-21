@@ -11,6 +11,8 @@ import sys
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+from yt_playlist_transcripts.date_utils import parse_since, parse_upload_date
+
 
 def channel_folder(url: str) -> str:
     parts = [unquote(part) for part in urlparse(url).path.split("/") if part]
@@ -65,7 +67,19 @@ def video_transcript_path(output: Path, video: dict) -> Path | None:
     return path if path and path.is_file() else None
 
 
-def write_index(output: Path, manifest: dict, summaries: Path) -> None:
+def transcript_upload_date(video: dict, transcript: Path):
+    uploaded = parse_upload_date(video)
+    if uploaded is not None:
+        return uploaded
+    try:
+        header = transcript.read_text(encoding="utf-8")[:4000]
+    except OSError:
+        return None
+    match = re.search(r"(?m)^upload_date:\s*[\"']?([^\"'\\s]+)", header)
+    return parse_upload_date({"upload_date": match.group(1)}) if match else None
+
+
+def write_index(output: Path, manifest: dict, summaries: Path, since=None) -> None:
     playlist = manifest.get("playlist", {})
     videos = manifest.get("videos", {})
     lines = [
@@ -84,7 +98,11 @@ def write_index(output: Path, manifest: dict, summaries: Path) -> None:
         title = (video.get("title") or video_id).replace("|", "\\|").replace("\n", " ")
         transcript_link = f"[transcript]({transcript.name})" if transcript else "—"
         summary_link = f"[{summary.name}](summaries/{summary.name})" if summary and summary.is_file() else "—"
-        summary_status = "summary ready" if summary and summary.is_file() else "summary pending"
+        uploaded = transcript_upload_date(video, transcript) if transcript else None
+        if since is not None and (uploaded is None or uploaded < since):
+            summary_status = "outside since window" if uploaded is not None else "upload date unknown"
+        else:
+            summary_status = "summary ready" if summary and summary.is_file() else "summary pending"
         lines.append(
             f"| {video.get('playlist_index', '')} | [{title}]({video.get('url', '')}) | "
             f"{transcript_link} | {summary_link} | {video.get('status', 'unknown')}; {summary_status} |"
@@ -120,18 +138,24 @@ def main() -> int:
     parser.add_argument("--limit", type=int, help="Process only the first N videos")
     parser.add_argument("--delay-min", type=float, default=0.5)
     parser.add_argument("--delay-max", type=float, default=2.0)
+    parser.add_argument(
+        "--since",
+        type=parse_since,
+        metavar="DATE|DAYS",
+        help="Include videos uploaded on/after YYYY-MM-DD or a day offset (-1=yesterday, 0=today)",
+    )
     parser.add_argument("--force", action="store_true", help="Re-extract transcripts and regenerate summaries")
     args = parser.parse_args()
 
     launcher = os.environ.get("YT_RESEARCH_LAUNCHER")
     if launcher == "powershell":
-        usage = r"Usage: .\run.ps1 -Channel <channel-url> [-OutputDirectory <dir>] [-Langs en,ko] [-Limit N] [-Force]"
+        usage = r"Usage: .\run.ps1 -Channel <channel-url> [-Since <YYYY-MM-DD|-1|0>] [-OutputDirectory <dir>] [-Limit N] [-Force]"
     elif launcher == "bash":
-        usage = "Usage: bash ./run.sh --channel <channel-url> [--output DIR] [--langs en,ko] [--limit N] [--force]"
+        usage = "Usage: bash ./run.sh --channel <channel-url> [--since YYYY-MM-DD|-1|0] [--output DIR] [--limit N] [--force]"
     else:
-        usage = "Usage: python run_research.py --channel <channel-url> [--output DIR] [--langs en,ko] [--limit N] [--force]"
+        usage = "Usage: python run_research.py --channel <channel-url> [--since YYYY-MM-DD|-1|0] [--output DIR] [--limit N] [--force]"
     print(usage, flush=True)
-    print("Options: --output sets the result folder; --langs sets subtitle language priority; --limit caps videos; --force re-extracts and regenerates summaries.", flush=True)
+    print("Options: --since filters inclusively by upload date; negative day offsets count back from today (-1 yesterday, 0 today). --output sets the result folder; --langs sets caption priority; --limit caps videos; --force re-extracts and regenerates summaries.", flush=True)
 
     root = Path(__file__).resolve().parent
     output = (args.output or (root / "output" / channel_folder(args.channel))).expanduser().resolve()
@@ -157,6 +181,8 @@ def main() -> int:
         command.extend(["--limit", str(args.limit)])
     if args.force:
         command.append("--force")
+    if args.since is not None:
+        command.extend(["--since", args.since.isoformat()])
     try:
         extracted = subprocess.run(command, cwd=root, check=False)
     except OSError as exc:
@@ -177,11 +203,18 @@ def main() -> int:
     print(f"[2/6] Found {len(videos)} video records; checking for new transcript summaries.", flush=True)
     errors = pipeline_errors
     candidates = []
+    eligible_summaries = set()
     for video_id, video in sorted(videos.items(), key=lambda item: item[1].get("playlist_index", 0)):
         transcript = video_transcript_path(output, video)
         if transcript is None:
             continue
+        if args.since is not None:
+            uploaded = transcript_upload_date(video, transcript)
+            if uploaded is None or uploaded < args.since:
+                continue
         summary = summaries / f"{transcript.stem}.summary.md"
+        if summary.is_file():
+            eligible_summaries.add(summary.resolve())
         if args.force or not summary.is_file():
             candidates.append((video_id, video, transcript, summary))
 
@@ -199,6 +232,7 @@ Write a concise Markdown summary with: a one-paragraph overview; the main points
         ok, error = run_codex(prompt, summary, output)
         error_file = summaries / f"{transcript.stem}.error.txt"
         if ok:
+            eligible_summaries.add(summary.resolve())
             error_file.unlink(missing_ok=True)
         else:
             summary.unlink(missing_ok=True)
@@ -207,7 +241,10 @@ Write a concise Markdown summary with: a one-paragraph overview; the main points
             error_file.write_text(error + "\n", encoding="utf-8")
             print(f"  summary failed: {error}", file=sys.stderr)
 
-    ready = [p for p in summaries.glob("*.summary.md") if p.is_file()] if summaries.exists() else []
+    ready = [
+        p for p in summaries.glob("*.summary.md")
+        if p.is_file() and (args.since is None or p.resolve() in eligible_summaries)
+    ] if summaries.exists() else []
     report = output / "RESEARCH.md"
     if ready:
         print(f"[5/6] Updating cross-video research report from {len(ready)} summary file(s).", flush=True)
@@ -228,7 +265,7 @@ Identify recurring themes, actors, positions, supporting examples, changes over 
         print("[5/6] No summaries are available; skipping cross-video report.", flush=True)
 
     print("[6/6] Writing index and failure list.", flush=True)
-    write_index(output, manifest, summaries)
+    write_index(output, manifest, summaries, args.since)
     write_failures(output, manifest, errors)
     print(f"Index:    {output / 'INDEX.md'}")
     print(f"Failures: {output / 'FAILURES.md'}")

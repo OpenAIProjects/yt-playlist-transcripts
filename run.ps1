@@ -5,6 +5,7 @@ param(
 
     [string] $OutputDirectory,
     [string] $Langs = 'en,ko',
+    [string] $Since,
     [int] $Limit,
     [double] $DelayMin = 0.5,
     [double] $DelayMax = 2.0,
@@ -32,6 +33,7 @@ $argsForRunner = @(
 )
 if ($OutputDirectory) { $argsForRunner += @('--output', $OutputDirectory) }
 if ($Limit -gt 0) { $argsForRunner += @('--limit', "$Limit") }
+if ($Since) { $argsForRunner += @('--since', $Since) }
 if ($Force) { $argsForRunner += '--force' }
 
 Push-Location $repoRoot

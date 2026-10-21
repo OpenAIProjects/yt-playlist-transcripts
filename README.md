@@ -153,7 +153,7 @@ For example, set a custom output folder and cap the run at five videos:
 
 ```powershell
 .\run.ps1 -Channel "https://www.youtube.com/@example/videos" `
-  -OutputDirectory ".\output\example" -Limit 5
+  -Since "-1" -OutputDirectory ".\output\example" -Limit 5
 ```
 
 Bash:
@@ -166,23 +166,31 @@ The Bash wrapper accepts the same options as the Python runner:
 
 ```bash
 bash ./run.sh --channel "https://www.youtube.com/@example/videos" \
-  --output ./output/example --limit 5
+  --since -1 --output ./output/example --limit 5
 ```
 
 Run the shared Python entry point directly when preferred:
 
 ```bash
 python run_research.py --channel "https://www.youtube.com/@example/videos" \
-  --output ./output/example --limit 5
+  --since 2026-10-19 --output ./output/example --limit 5
 ```
 
+`-Since` / `--since` includes videos uploaded on or after the given date. Supply
+an ISO date (`2026-10-19`) or an integer offset from today: `-1` means
+yesterday, `0` means today, and `-7` means seven days ago. Date filtering fully
+resolves channel video metadata so upload dates are available; entries with no
+usable upload date are listed as failures instead of being silently included
+or excluded.
+
 PowerShell supports `-OutputDirectory`, `-Langs`, `-Limit`, `-DelayMin`,
-`-DelayMax`, and `-Force`. The Bash wrapper and Python runner support `--output`,
-`--langs`, `--limit`, `--delay-min`, `--delay-max`, and `--force`. Without an
-explicit output directory, files go to `output/<channel-handle>/`. The pipeline
-writes `INDEX.md`, `FAILURES.md`, `RESEARCH.md`, and individual summaries under
-`summaries/`. Failed Codex summaries are retried on the next run; `-Force` /
-`--force` re-extracts transcripts and regenerates summaries.
+`-DelayMax`, `-Since`, and `-Force`. The Bash wrapper and Python runner support
+`--output`, `--langs`, `--limit`, `--delay-min`, `--delay-max`, `--since`, and
+`--force`. Without an explicit output directory, files go to
+`output/<channel-handle>/`. The pipeline writes `INDEX.md`, `FAILURES.md`,
+`RESEARCH.md`, and individual summaries under `summaries/`. Failed Codex
+summaries are retried on the next run; `-Force` / `--force` re-extracts
+transcripts and regenerates summaries.
 
 ## How block splitting works
 
