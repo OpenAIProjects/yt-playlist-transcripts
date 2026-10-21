@@ -35,6 +35,7 @@ from tenacity import (
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError, ExtractorError
 from .date_utils import parse_since, parse_upload_date
+from .progress import ProgressBar, Spinner
 
 
 # ---------------------------------------------------------------------------
@@ -44,6 +45,7 @@ class Status:
     DONE = "done"
     SKIPPED_EXISTING = "skipped_existing"
     SKIPPED_NO_TRANSCRIPT = "skipped_no_transcript"
+    SKIPPED_MEMBERS_ONLY = "skipped_members_only"
     FAILED_VIDEO_UNAVAILABLE = "failed_video_unavailable"
     FAILED_AGE_RESTRICTED = "failed_age_restricted"
     FAILED_REQUEST_BLOCKED = "failed_request_blocked"
@@ -55,6 +57,7 @@ STATUS_LABEL = {
     Status.DONE: "ok",
     Status.SKIPPED_EXISTING: "skip(exists)",
     Status.SKIPPED_NO_TRANSCRIPT: "skip(no transcript)",
+    Status.SKIPPED_MEMBERS_ONLY: "skip(members only)",
     Status.FAILED_VIDEO_UNAVAILABLE: "fail(unavailable)",
     Status.FAILED_AGE_RESTRICTED: "fail(age)",
     Status.FAILED_REQUEST_BLOCKED: "fail(blocked)",
@@ -218,6 +221,38 @@ def classify_yt_error(exc: BaseException) -> str:
     if any(s in msg for s in ("blocked", "captcha", "bot")):
         return Status.FAILED_REQUEST_BLOCKED
     return Status.FAILED_UNEXPECTED
+
+
+def is_members_only(
+    entry: dict | None = None, error: BaseException | str | None = None
+) -> bool:
+    availability = str((entry or {}).get("availability", "")).lower()
+    if availability in {"subscriber_only", "premium_only"}:
+        return True
+    message = str(error or "").lower()
+    return any(
+        marker in message
+        for marker in (
+            "members-only",
+            "members only",
+            "join this channel to get access",
+            "available to this channel's members",
+        )
+    )
+
+
+class PlaylistLogger:
+    """Keep yt-dlp member-only skips quiet while retaining other errors."""
+
+    def debug(self, message: str) -> None:
+        pass
+
+    def warning(self, message: str) -> None:
+        pass
+
+    def error(self, message: str) -> None:
+        if not is_members_only(error=message):
+            print(message, file=sys.stderr)
 
 
 def _discover_tracks(video_id: str) -> dict:
@@ -528,8 +563,11 @@ def enumerate_playlist(url: str, resolve_entries: bool = False) -> dict:
     opts = {
         "extract_flat": False if resolve_entries else "in_playlist",
         "skip_download": True,
+        # A single members-only item must not abort channel enumeration.
+        "ignoreerrors": True,
         "quiet": True,
         "no_warnings": True,
+        "logger": PlaylistLogger(),
     }
     with YoutubeDL(opts) as ydl:
         data = ydl.extract_info(url, download=False)
@@ -588,9 +626,9 @@ def main(argv: list[str] | None = None) -> int:
         print("ERROR: --langs is empty", file=sys.stderr)
         return 2
 
-    print(f"Enumerating: {args.url}", file=sys.stderr)
     try:
-        pl = enumerate_playlist(args.url, resolve_entries=args.since is not None)
+        with Spinner("Enumerating channel videos (waiting for YouTube)..."):
+            pl = enumerate_playlist(args.url, resolve_entries=args.since is not None)
     except Exception as e:
         print(f"ERROR: enumeration failed: {e}", file=sys.stderr)
         return 1
@@ -662,19 +700,37 @@ def main(argv: list[str] | None = None) -> int:
             }
         save_manifest(manifest_path, manifest)
 
+    for entry in all_entries:
+        if entry and is_members_only(entry):
+            vid_id = entry.get("id")
+            if vid_id:
+                manifest["videos"][vid_id] = {
+                    "playlist_index": entry.get("playlist_index", "?"),
+                    "title": entry.get("title") or vid_id,
+                    "url": entry.get("url") or f"https://www.youtube.com/watch?v={vid_id}",
+                    "status": Status.SKIPPED_MEMBERS_ONLY,
+                }
+    save_manifest(manifest_path, manifest)
+
+    entries_to_process = [
+        entry for entry in entries
+        if entry
+        and not is_members_only(entry)
+        and (entry.get("playlist_index") or 1) >= args.start
+    ]
+    if args.limit:
+        entries_to_process = entries_to_process[:args.limit]
     processed = 0
-    for entry in entries:
+    progress = ProgressBar("Extracting transcripts", len(entries_to_process))
+    for entry in entries_to_process:
         idx = entry.get("playlist_index") or 1
-        if idx < args.start:
-            continue
-        if args.limit and processed >= args.limit:
-            break
         processed += 1
 
         vid_id = entry["id"]
         title = entry.get("title") or vid_id
         url = entry.get("url") or f"https://www.youtube.com/watch?v={vid_id}"
         prefix = f"[{idx}/{len(all_entries)}] {vid_id}"
+        progress.update(processed - 1, f"working on: {title}")
 
         existing = existing_md_for(vid_id, output_dir)
         if existing and not args.force:
@@ -688,13 +744,15 @@ def main(argv: list[str] | None = None) -> int:
                 "upload_date": entry.get("upload_date"),
             }
             save_manifest(manifest_path, manifest)
+            progress.update(processed, f"skipped existing: {title}")
             continue
 
         try:
-            result = fetch_video_subs(
-                vid_id, langs, work_dir,
-                info=entry if args.since is not None else None,
-            )
+            with Spinner(f"Extracting transcript {processed}/{len(entries_to_process)}: {title}"):
+                result = fetch_video_subs(
+                    vid_id, langs, work_dir,
+                    info=entry if args.since is not None else None,
+                )
         except TranscriptNotFound:
             print(f"{prefix} no transcript", file=sys.stderr)
             manifest["videos"][vid_id] = {
@@ -704,6 +762,7 @@ def main(argv: list[str] | None = None) -> int:
                 "status": Status.SKIPPED_NO_TRANSCRIPT,
             }
             save_manifest(manifest_path, manifest)
+            progress.update(processed, f"no transcript: {title}")
             continue
         except TransientError as e:
             msg = str(e).lower()
@@ -718,8 +777,20 @@ def main(argv: list[str] | None = None) -> int:
             }
             save_manifest(manifest_path, manifest)
             time.sleep(10.0)  # cool down on rate limit
+            progress.update(processed, f"failed: {title}")
             continue
         except (DownloadError, ExtractorError) as e:
+            if is_members_only(entry, e):
+                print(f"{prefix} skip (members only)", file=sys.stderr)
+                manifest["videos"][vid_id] = {
+                    "playlist_index": idx,
+                    "title": title,
+                    "url": url,
+                    "status": Status.SKIPPED_MEMBERS_ONLY,
+                }
+                save_manifest(manifest_path, manifest)
+                progress.update(processed, f"skipped members-only: {title}")
+                continue
             status = classify_yt_error(e)
             print(f"{prefix} {status}: {e}", file=sys.stderr)
             manifest["videos"][vid_id] = {
@@ -730,6 +801,7 @@ def main(argv: list[str] | None = None) -> int:
                 "error": str(e)[:500],
             }
             save_manifest(manifest_path, manifest)
+            progress.update(processed, f"failed: {title}")
             continue
         except Exception as e:
             print(f"{prefix} unexpected: {e}", file=sys.stderr)
@@ -741,6 +813,7 @@ def main(argv: list[str] | None = None) -> int:
                 "error": str(e)[:500],
             }
             save_manifest(manifest_path, manifest)
+            progress.update(processed, f"failed writing: {title}")
             continue
 
         try:
@@ -779,6 +852,7 @@ def main(argv: list[str] | None = None) -> int:
             f"{prefix} done -> {md_path.name} (source={result['source']}, lang={result['lang']}, blocks={fm.get('block_count')})",
             file=sys.stderr,
         )
+        progress.update(processed, f"saved: {title}")
 
         time.sleep(random.uniform(args.delay_min, args.delay_max))
 
@@ -793,6 +867,8 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:
         pass
 
+    if not entries_to_process:
+        progress.update(0, "nothing to process")
     write_readme(output_dir, manifest)
 
     counts = {}

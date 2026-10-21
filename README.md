@@ -190,12 +190,20 @@ python run_research.py --channel "https://www.youtube.com/@example/videos" \
 
 The `--channel` / `-Channel` value can be a `/videos` URL or a shorthand such
 as `@example`; the runner expands the shorthand to
-`https://www.youtube.com/@example/videos`. `-Since` / `--since` includes
-videos uploaded on or after the given date. Supply an ISO date (`2026-10-19`)
+`https://www.youtube.com/@example/videos`. Use the exact channel handle with
+no spaces (for example, `@tomnashtv`), not its display name. `-Since` / `--since`
+includes videos uploaded on or after the given date. Supply an ISO date (`2026-10-19`)
 or an integer offset from today: `-1` means yesterday, `0` means today, and
 `-7` means seven days ago. Date filtering fully resolves channel video metadata
 so upload dates are available; entries with no usable upload date are listed
 as failures instead of being silently included or excluded.
+
+All three launchers (`run.ps1`, `run.sh`, and `run_research.py`) show the same
+pipeline progress. Enumeration displays an activity spinner while YouTube is
+responding; transcript extraction and Codex summaries show per-item progress
+bars, and long-running summary/report generation displays an activity spinner.
+Members-only videos are skipped; they do not stop channel enumeration or enter
+the transcript and summary steps.
 
 PowerShell supports `-OutputDirectory`, `-Langs`, `-Limit`, `-DelayMin`,
 `-DelayMax`, `-Since`, and `-Force`; it also forwards additional Python-style

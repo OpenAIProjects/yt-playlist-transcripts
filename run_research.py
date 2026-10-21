@@ -12,6 +12,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from yt_playlist_transcripts.date_utils import parse_since, parse_upload_date
+from yt_playlist_transcripts.progress import ProgressBar, Spinner
 
 
 def channel_folder(url: str) -> str:
@@ -31,6 +32,11 @@ def normalize_channel(value: str) -> str:
     value = value.strip()
     if value.startswith("@"):
         handle = value.strip("/")
+        if any(character.isspace() for character in handle):
+            raise ValueError(
+                "YouTube handles cannot contain spaces. Pass the exact @handle "
+                "(for example, @tomnashtv) or the channel's /videos URL."
+            )
         return f"https://www.youtube.com/{handle}/videos"
     return value
 
@@ -169,7 +175,10 @@ def main() -> int:
     )
     parser.add_argument("--force", action="store_true", help="Re-extract transcripts and regenerate summaries")
     args = parser.parse_args(normalize_long_options(sys.argv[1:]))
-    args.channel = normalize_channel(args.channel)
+    try:
+        args.channel = normalize_channel(args.channel)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     launcher = os.environ.get("YT_RESEARCH_LAUNCHER")
     if launcher == "powershell":
@@ -244,8 +253,10 @@ def main() -> int:
             candidates.append((video_id, video, transcript, summary))
 
     print(f"[3/6] {len(candidates)} transcript(s) need an independent summary.", flush=True)
+    summary_progress = ProgressBar("Generating summaries", len(candidates))
     for number, (video_id, video, transcript, summary) in enumerate(candidates, 1):
-        print(f"[4/6] Summarizing {number}/{len(candidates)}: {video.get('title') or video_id}", flush=True)
+        title = video.get("title") or video_id
+        summary_progress.update(number - 1, f"working on: {title}")
         if args.force:
             summary.unlink(missing_ok=True)
         prompt = f"""Read the complete transcript file at `{transcript.name}` in the current directory and write an independent summary of this one video.
@@ -254,17 +265,23 @@ Video title: {video.get('title') or video_id}
 Video URL: {video.get('url', '')}
 
 Write a concise Markdown summary with: a one-paragraph overview; the main points in order; named people, organizations, places, dates, and figures; notable claims clearly attributed to the speaker; and unresolved or unclear points. Preserve the transcript's language. Separate what the speaker says from your interpretation. Do not use outside sources or invent details. Save the final response to the requested output file through the codex exec output option."""
-        ok, error = run_codex(prompt, summary, output)
+        with Spinner(f"[4/6] Summarizing {number}/{len(candidates)}: {title}"):
+            ok, error = run_codex(prompt, summary, output)
         error_file = summaries / f"{transcript.stem}.error.txt"
         if ok:
             eligible_summaries.add(summary.resolve())
             error_file.unlink(missing_ok=True)
+            summary_progress.update(number, f"done: {title}")
         else:
             summary.unlink(missing_ok=True)
             errors.append((video.get("title") or video_id, error))
             summaries.mkdir(parents=True, exist_ok=True)
             error_file.write_text(error + "\n", encoding="utf-8")
             print(f"  summary failed: {error}", file=sys.stderr)
+            summary_progress.update(number, f"failed: {title}")
+
+    if not candidates:
+        summary_progress.update(0, "nothing to summarize")
 
     ready = [
         p for p in summaries.glob("*.summary.md")
@@ -279,7 +296,8 @@ Write a concise Markdown summary with: a one-paragraph overview; the main points
 {summary_names}
 
 Identify recurring themes, actors, positions, supporting examples, changes over time when dates permit, and meaningful disagreements or gaps. Distinguish reported claims from established facts; this task does not include external fact-checking. Include a short executive overview, thematic sections, a dated timeline when supported, and source links to the individual summaries using their listed relative paths. Keep uncertainty explicit. Do not invent connections unsupported by the summaries."""
-        ok, error = run_codex(prompt, report, output)
+        with Spinner("[5/6] Updating cross-video research report"):
+            ok, error = run_codex(prompt, report, output)
         if not ok:
             errors.append(("cross-video research report", error))
             (output / "RESEARCH.error.txt").write_text(error + "\n", encoding="utf-8")
