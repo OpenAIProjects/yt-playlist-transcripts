@@ -129,6 +129,61 @@ video's duration, chapter/block count mismatches, and word-count drift between
 the raw segments and the rendered markdown. Exits non-zero if anything is
 flagged.
 
+## Channel research pipeline
+
+`run.ps1`, `run.sh`, and `run_research.py` run the channel workflow: enumerate
+the channel's `/videos` page, extract or resume transcripts, identify
+transcripts without a summary, call `codex exec` once per video, update a
+cross-video report, and write an index and failure list. The transcript
+extractor's existing `manifest.json` remains the source of truth for extraction
+status. The PowerShell and Bash scripts are convenient wrappers around the
+Python runner. Each successful invocation prints the matching command syntax
+and a short option guide before starting the workflow.
+
+Requirements: Python 3.10+ with this project installed (`pip install -e .`),
+and the Codex CLI available as `codex` on `PATH`.
+
+PowerShell:
+
+```powershell
+.\run.ps1 -Channel "https://www.youtube.com/@example/videos"
+```
+
+For example, set a custom output folder and cap the run at five videos:
+
+```powershell
+.\run.ps1 -Channel "https://www.youtube.com/@example/videos" `
+  -OutputDirectory ".\output\example" -Limit 5
+```
+
+Bash:
+
+```bash
+bash ./run.sh --channel "https://www.youtube.com/@example/videos"
+```
+
+The Bash wrapper accepts the same options as the Python runner:
+
+```bash
+bash ./run.sh --channel "https://www.youtube.com/@example/videos" \
+  --output ./output/example --limit 5
+```
+
+Run the shared Python entry point directly when preferred:
+
+```bash
+python run_research.py --channel "https://www.youtube.com/@example/videos" \
+  --output ./output/example --limit 5
+```
+
+PowerShell supports `-OutputDirectory`, `-Langs`, `-Limit`, `-DelayMin`,
+`-DelayMax`, and `-Force`. The Bash wrapper and Python runner support `--output`,
+`--langs`, `--limit`, `--delay-min`, `--delay-max`, and `--force`. Without an
+explicit output directory, files go to `output/<channel-handle>/`. The pipeline
+writes `INDEX.md`, `FAILURES.md`, `RESEARCH.md`, and individual summaries under
+`summaries/`. Failed Codex summaries are retried on the next run; `-Force` /
+`--force` re-extracts transcripts and regenerates summaries.
+
 ## How block splitting works
 
 Sentence boundaries are **not** inferred for ASR text. Blocks split on:
