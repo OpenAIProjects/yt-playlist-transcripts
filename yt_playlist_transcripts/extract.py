@@ -559,9 +559,9 @@ def write_readme(output_dir: Path, manifest: dict) -> None:
 # ---------------------------------------------------------------------------
 # Playlist enumeration
 
-def enumerate_playlist(url: str, resolve_entries: bool = False) -> dict:
+def enumerate_playlist(url: str) -> dict:
     opts = {
-        "extract_flat": False if resolve_entries else "in_playlist",
+        "extract_flat": "in_playlist",
         "skip_download": True,
         # A single members-only item must not abort channel enumeration.
         "ignoreerrors": True,
@@ -574,6 +574,20 @@ def enumerate_playlist(url: str, resolve_entries: bool = False) -> dict:
     if data is None or data.get("_type") != "playlist":
         raise ValueError("Not a playlist URL or playlist could not be enumerated")
     return data
+
+
+def resolve_video_entry(ydl: YoutubeDL, entry: dict) -> dict:
+    """Resolve one flat playlist entry without expanding the full channel."""
+    video_id = entry.get("id")
+    url = entry.get("url") or f"https://www.youtube.com/watch?v={video_id}"
+    info = ydl.extract_info(url, download=False)
+    if not info:
+        raise DownloadError(f"Could not resolve video metadata for {video_id}")
+    resolved = dict(entry)
+    resolved.update(info)
+    if entry.get("playlist_index"):
+        resolved["playlist_index"] = entry["playlist_index"]
+    return resolved
 
 
 def existing_md_for(video_id: str, output_dir: Path) -> Path | None:
@@ -628,7 +642,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         with Spinner("Enumerating channel videos (waiting for YouTube)..."):
-            pl = enumerate_playlist(args.url, resolve_entries=args.since is not None)
+            pl = enumerate_playlist(args.url)
     except Exception as e:
         print(f"ERROR: enumeration failed: {e}", file=sys.stderr)
         return 1
@@ -644,18 +658,86 @@ def main(argv: list[str] | None = None) -> int:
     if args.since is not None:
         selected = []
         unknown_dates = []
-        for entry in all_entries:
-            if not entry:
-                continue
-            upload_date = parse_upload_date(entry)
-            if upload_date is None:
-                unknown_dates.append(entry)
-            elif upload_date >= args.since:
-                selected.append(entry)
+        checked = 0
+        checked_progress = ProgressBar("Checking upload dates", len(all_entries))
+        lookup_options = {
+            "skip_download": True,
+            "ignoreerrors": False,
+            "quiet": True,
+            "no_warnings": True,
+            "logger": PlaylistLogger(),
+        }
+        try:
+            with YoutubeDL(lookup_options) as ydl:
+                for entry in all_entries:
+                    if not entry:
+                        continue
+                    checked += 1
+                    playlist_index = entry.get("playlist_index") or checked
+                    if is_members_only(entry):
+                        entry["availability"] = "subscriber_only"
+                        checked_progress.update(checked, f"skipping members-only: {entry.get('title') or entry.get('id')}")
+                        continue
+
+                    flat_date = parse_upload_date(entry)
+                    if flat_date is not None and flat_date < args.since:
+                        checked_progress.update(checked, f"date cutoff reached at playlist item {playlist_index}")
+                        break
+
+                    try:
+                        resolved = resolve_video_entry(ydl, entry)
+                    except (DownloadError, ExtractorError) as exc:
+                        if is_members_only(entry, exc):
+                            entry["availability"] = "subscriber_only"
+                            checked_progress.update(checked, f"skipping members-only: {entry.get('title') or entry.get('id')}")
+                            time.sleep(random.uniform(args.delay_min, args.delay_max))
+                            continue
+                        message = str(exc)
+                        lowered_message = message.lower()
+                        if any(
+                            marker in lowered_message
+                            for marker in (
+                                "429",
+                                "rate-limit",
+                                "rate limit",
+                                "too many requests",
+                            )
+                        ):
+                            raise RuntimeError(
+                                "YouTube rate-limited video metadata lookups. "
+                                "Pause before retrying; the runner now checks only "
+                                "videos needed for the --since range."
+                            ) from exc
+                        unknown_dates.append({**entry, "_date_lookup_error": message})
+                        checked_progress.update(checked, f"date unavailable: {entry.get('title') or entry.get('id')}")
+                        time.sleep(random.uniform(args.delay_min, args.delay_max))
+                        continue
+
+                    entry.update(resolved)
+                    upload_date = parse_upload_date(entry)
+                    if upload_date is None:
+                        unknown_dates.append(entry)
+                        checked_progress.update(checked, f"date unavailable: {entry.get('title') or entry.get('id')}")
+                        time.sleep(random.uniform(args.delay_min, args.delay_max))
+                        continue
+                    if upload_date < args.since:
+                        checked_progress.update(checked, f"date cutoff reached at playlist item {playlist_index}")
+                        break
+                    if playlist_index >= args.start:
+                        selected.append(entry)
+                    checked_progress.update(checked, f"matched: {len(selected)} video(s)")
+                    if args.limit and args.limit > 0 and len(selected) >= args.limit:
+                        checked_progress.update(checked, f"limit reached: {len(selected)} matching video(s)")
+                        break
+                    time.sleep(random.uniform(args.delay_min, args.delay_max))
+        except RuntimeError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
         entries = selected
         print(
             f"Since {args.since.isoformat()}: {len(entries)} video(s) match; "
-            f"{len(unknown_dates)} have no usable upload date",
+            f"{len(unknown_dates)} have no usable upload date; "
+            f"checked {checked} of {len(all_entries)} playlist entries",
             file=sys.stderr,
         )
 
@@ -684,9 +766,7 @@ def main(argv: list[str] | None = None) -> int:
     save_manifest(manifest_path, manifest)
 
     if args.since is not None:
-        for entry in all_entries:
-            if not entry or parse_upload_date(entry) is not None:
-                continue
+        for entry in unknown_dates:
             vid_id = entry.get("id")
             if not vid_id:
                 continue
@@ -696,7 +776,7 @@ def main(argv: list[str] | None = None) -> int:
                 "title": entry.get("title") or vid_id,
                 "url": entry.get("url") or f"https://www.youtube.com/watch?v={vid_id}",
                 "status": Status.FAILED_UNEXPECTED,
-                "error": f"Since filter {args.since.isoformat()} could not be applied: upload date is unavailable",
+                "error": entry.get("_date_lookup_error") or f"Since filter {args.since.isoformat()} could not be applied: upload date is unavailable",
             }
         save_manifest(manifest_path, manifest)
 

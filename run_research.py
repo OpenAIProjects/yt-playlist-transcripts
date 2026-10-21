@@ -52,6 +52,16 @@ def normalize_long_options(argv: list[str]) -> list[str]:
     return normalized
 
 
+def translation_language_slug(language: str) -> str:
+    return re.sub(r"[^\w.-]+", "-", language.strip(), flags=re.UNICODE).strip("-._")
+
+
+def save_manifest(path: Path, manifest: dict) -> None:
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(path)
+
+
 def load_manifest(path: Path) -> dict:
     if not path.is_file():
         raise RuntimeError(f"Transcript extractor did not create {path}")
@@ -118,14 +128,21 @@ def write_index(output: Path, manifest: dict, summaries: Path, since=None) -> No
         f"- Videos discovered: {playlist.get('video_count', len(videos))}",
         f"- Video records in manifest: {len(videos)}",
         "",
-        "| # | Video | Transcript | Summary | Status |",
-        "|---:|---|---|---|---|",
+        "| # | Video | Transcript | Translation(s) | Summary | Status |",
+        "|---:|---|---|---|---|---|",
     ]
     for video_id, video in sorted(videos.items(), key=lambda item: item[1].get("playlist_index", 0)):
         transcript = video_transcript_path(output, video)
         summary = summaries / f"{transcript.stem}.summary.md" if transcript else None
         title = (video.get("title") or video_id).replace("|", "\\|").replace("\n", " ")
         transcript_link = f"[transcript]({transcript.name})" if transcript else "—"
+        translation_links = []
+        for language, translation in video.get("translations", {}).items():
+            relative_path = translation.get("path", "")
+            translated_file = output / relative_path
+            if translation.get("status") == "done" and translated_file.is_file():
+                translation_links.append(f"[{language}]({relative_path.replace(os.sep, '/')})")
+        translation_link = "<br>".join(translation_links) if translation_links else "—"
         summary_link = f"[{summary.name}](summaries/{summary.name})" if summary and summary.is_file() else "—"
         uploaded = transcript_upload_date(video, transcript) if transcript else None
         if since is not None and (uploaded is None or uploaded < since):
@@ -134,7 +151,8 @@ def write_index(output: Path, manifest: dict, summaries: Path, since=None) -> No
             summary_status = "summary ready" if summary and summary.is_file() else "summary pending"
         lines.append(
             f"| {video.get('playlist_index', '')} | [{title}]({video.get('url', '')}) | "
-            f"{transcript_link} | {summary_link} | {video.get('status', 'unknown')}; {summary_status} |"
+            f"{transcript_link} | {translation_link} | {summary_link} | "
+            f"{video.get('status', 'unknown')}; {summary_status} |"
         )
     (output / "INDEX.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -147,7 +165,8 @@ def write_failures(output: Path, manifest: dict, errors: list[tuple[str, str]]) 
         if status.startswith("failed_") or status == "skipped_no_transcript":
             failures.append((video.get("playlist_index", ""), video.get("title") or video_id, status, video.get("error", "")))
     for name, detail in errors:
-        failures.append(("", name, "summary_failed", detail))
+        status = "translation_failed" if name.startswith("translation:") else "summary_failed"
+        failures.append(("", name, status, detail))
     failures.sort(key=lambda row: (row[0] if isinstance(row[0], int) else 10**12, str(row[1])))
     if not failures:
         lines.append("No failures recorded.")
@@ -168,6 +187,11 @@ def main() -> int:
     parser.add_argument("--delay-min", type=float, default=0.5)
     parser.add_argument("--delay-max", type=float, default=2.0)
     parser.add_argument(
+        "--translate-to",
+        metavar="LANGUAGE",
+        help="Translate each available transcript into LANGUAGE using Codex",
+    )
+    parser.add_argument(
         "--since",
         type=parse_since,
         metavar="DATE|DAYS",
@@ -182,13 +206,15 @@ def main() -> int:
 
     launcher = os.environ.get("YT_RESEARCH_LAUNCHER")
     if launcher == "powershell":
-        usage = r"Usage: .\run.ps1 -Channel <channel-url|@handle> [-Since <YYYY-MM-DD|-1|0>] [-OutputDirectory <dir>] [-Limit N] [-Force]"
+        usage = r"Usage: .\run.ps1 -Channel <channel-url|@handle> [-Since <YYYY-MM-DD|-1|0>] [-OutputDirectory <dir>] [-Limit N] [-TranslateTo LANGUAGE] [-Force]"
     elif launcher == "bash":
-        usage = "Usage: bash ./run.sh --channel <channel-url|@handle> [--since YYYY-MM-DD|-1|0] [--output DIR] [--limit N] [--force]"
+        usage = "Usage: bash ./run.sh --channel <channel-url|@handle> [--since YYYY-MM-DD|-1|0] [--output DIR] [--limit N] [--translate-to LANGUAGE] [--force]"
     else:
-        usage = "Usage: python run_research.py --channel <channel-url|@handle> [--since YYYY-MM-DD|-1|0] [--output DIR] [--limit N] [--force]"
+        usage = "Usage: python run_research.py --channel <channel-url|@handle> [--since YYYY-MM-DD|-1|0] [--output DIR] [--limit N] [--translate-to LANGUAGE] [--force]"
     print(usage, flush=True)
-    print("Options: --since filters inclusively by upload date; negative day offsets count back from today (-1 yesterday, 0 today). --output sets the result folder; --langs sets caption priority; --limit caps videos; --force re-extracts and regenerates summaries.", flush=True)
+    print("Options: --since filters inclusively by upload date; negative day offsets count back from today (-1 yesterday, 0 today). --output sets the result folder; --langs sets caption priority; --limit caps videos; --translate-to creates translated transcript copies; --force re-extracts and regenerates outputs.", flush=True)
+    if args.translate_to and not translation_language_slug(args.translate_to):
+        parser.error("--translate-to must contain a language name or code, for example cn or Spanish")
 
     root = Path(__file__).resolve().parent
     output = (args.output or (root / "transcripts" / channel_folder(args.channel))).expanduser().resolve()
@@ -196,7 +222,7 @@ def main() -> int:
     print(f"Output directory: {output}", flush=True)
     summaries = output / "summaries"
 
-    print(f"[1/6] Discovering channel videos and extracting transcripts: {args.channel}", flush=True)
+    print(f"[1/7] Discovering channel videos and extracting transcripts: {args.channel}", flush=True)
     command = [
         sys.executable,
         "-m",
@@ -234,10 +260,9 @@ def main() -> int:
         return extracted.returncode or 1
 
     videos = manifest.get("videos", {})
-    print(f"[2/6] Found {len(videos)} video records; checking for new transcript summaries.", flush=True)
+    print(f"[2/7] Found {len(videos)} video records; selecting available transcripts.", flush=True)
     errors = pipeline_errors
-    candidates = []
-    eligible_summaries = set()
+    transcripts = []
     for video_id, video in sorted(videos.items(), key=lambda item: item[1].get("playlist_index", 0)):
         transcript = video_transcript_path(output, video)
         if transcript is None:
@@ -246,13 +271,67 @@ def main() -> int:
             uploaded = transcript_upload_date(video, transcript)
             if uploaded is None or uploaded < args.since:
                 continue
+        transcripts.append((video_id, video, transcript))
+
+    if args.translate_to:
+        language = args.translate_to.strip()
+        language_slug = translation_language_slug(language)
+        target_language = "Simplified Chinese" if language.casefold() == "cn" else language
+        translations_dir = output / "translations"
+        translations_dir.mkdir(parents=True, exist_ok=True)
+        translation_progress = ProgressBar("Translating transcripts", len(transcripts))
+        print(f"[3/7] Translating {len(transcripts)} transcript(s) to {language}.", flush=True)
+        for number, (video_id, video, transcript) in enumerate(transcripts, 1):
+            translation_progress.update(number - 1, f"working on: {video.get('title') or video_id}")
+            translation = translations_dir / f"{transcript.stem}.{language_slug}.md"
+            relative_translation = translation.relative_to(output).as_posix()
+            translation_error = translations_dir / f"{transcript.stem}.{language_slug}.error.txt"
+            translations = video.setdefault("translations", {})
+            translation_record = translations.setdefault(language, {})
+
+            if translation.is_file() and not args.force:
+                translation_record.update({"path": relative_translation, "status": "done"})
+                translation_error.unlink(missing_ok=True)
+                translation_progress.update(number, f"already translated: {video.get('title') or video_id}")
+                save_manifest(output / "manifest.json", manifest)
+                continue
+
+            translation.unlink(missing_ok=True)
+            transcript_relative = transcript.relative_to(output).as_posix()
+            prompt = f"""Read the complete Markdown transcript at `{transcript_relative}` and translate it into {target_language}.
+
+Return only the translated Markdown, with no introduction, notes, or summary. Preserve the YAML front matter exactly. Translate all transcript prose and headings without omitting or condensing content. Keep timestamps, speaker labels, URLs, video IDs, numbers, Markdown links, and block order unchanged. Do not add facts or explanations.
+
+Write the translation as the final response using the codex exec output option."""
+            with Spinner(f"[3/7] Translating {number}/{len(transcripts)} to {language}: {video.get('title') or video_id}"):
+                ok, error = run_codex(prompt, translation, output)
+            if ok:
+                translation_record.update({"path": relative_translation, "status": "done"})
+                translation_error.unlink(missing_ok=True)
+                translation_progress.update(number, f"done: {video.get('title') or video_id}")
+            else:
+                translation.unlink(missing_ok=True)
+                translation_record.update({"path": relative_translation, "status": "failed", "error": error})
+                translation_error.write_text(error + "\n", encoding="utf-8")
+                errors.append((f"translation: {video.get('title') or video_id} ({language})", error))
+                print(f"  translation failed: {error}", file=sys.stderr)
+                translation_progress.update(number, f"failed: {video.get('title') or video_id}")
+            save_manifest(output / "manifest.json", manifest)
+        if not transcripts:
+            translation_progress.update(0, "no transcripts available")
+    else:
+        print("[3/7] Translation disabled; use --translate-to LANGUAGE to create translated copies.", flush=True)
+
+    candidates = []
+    eligible_summaries = set()
+    for video_id, video, transcript in transcripts:
         summary = summaries / f"{transcript.stem}.summary.md"
         if summary.is_file():
             eligible_summaries.add(summary.resolve())
         if args.force or not summary.is_file():
             candidates.append((video_id, video, transcript, summary))
 
-    print(f"[3/6] {len(candidates)} transcript(s) need an independent summary.", flush=True)
+    print(f"[4/7] {len(candidates)} transcript(s) need an independent summary.", flush=True)
     summary_progress = ProgressBar("Generating summaries", len(candidates))
     for number, (video_id, video, transcript, summary) in enumerate(candidates, 1):
         title = video.get("title") or video_id
@@ -265,7 +344,7 @@ Video title: {video.get('title') or video_id}
 Video URL: {video.get('url', '')}
 
 Write a concise Markdown summary with: a one-paragraph overview; the main points in order; named people, organizations, places, dates, and figures; notable claims clearly attributed to the speaker; and unresolved or unclear points. Preserve the transcript's language. Separate what the speaker says from your interpretation. Do not use outside sources or invent details. Save the final response to the requested output file through the codex exec output option."""
-        with Spinner(f"[4/6] Summarizing {number}/{len(candidates)}: {title}"):
+        with Spinner(f"[5/7] Summarizing {number}/{len(candidates)}: {title}"):
             ok, error = run_codex(prompt, summary, output)
         error_file = summaries / f"{transcript.stem}.error.txt"
         if ok:
@@ -289,14 +368,14 @@ Write a concise Markdown summary with: a one-paragraph overview; the main points
     ] if summaries.exists() else []
     report = output / "RESEARCH.md"
     if ready:
-        print(f"[5/6] Updating cross-video research report from {len(ready)} summary file(s).", flush=True)
+        print(f"[6/7] Updating cross-video research report from {len(ready)} summary file(s).", flush=True)
         summary_names = "\n".join(f"- summaries/{p.name}" for p in sorted(ready))
         prior_note = f"Read the current report at `{report.name}` and update it without losing prior findings. " if report.is_file() else "Create a new report. "
         prompt = f"""{prior_note}Read and synthesize every individual video summary listed below into a cross-video research report. The current directory contains these files:
 {summary_names}
 
 Identify recurring themes, actors, positions, supporting examples, changes over time when dates permit, and meaningful disagreements or gaps. Distinguish reported claims from established facts; this task does not include external fact-checking. Include a short executive overview, thematic sections, a dated timeline when supported, and source links to the individual summaries using their listed relative paths. Keep uncertainty explicit. Do not invent connections unsupported by the summaries."""
-        with Spinner("[5/6] Updating cross-video research report"):
+        with Spinner("[6/7] Updating cross-video research report"):
             ok, error = run_codex(prompt, report, output)
         if not ok:
             errors.append(("cross-video research report", error))
@@ -305,9 +384,9 @@ Identify recurring themes, actors, positions, supporting examples, changes over 
         else:
             (output / "RESEARCH.error.txt").unlink(missing_ok=True)
     else:
-        print("[5/6] No summaries are available; skipping cross-video report.", flush=True)
+        print("[6/7] No summaries are available; skipping cross-video report.", flush=True)
 
-    print("[6/6] Writing index and failure list.", flush=True)
+    print("[7/7] Writing index and failure list.", flush=True)
     write_index(output, manifest, summaries, args.since)
     write_failures(output, manifest, errors)
     print(f"Index:    {output / 'INDEX.md'}")

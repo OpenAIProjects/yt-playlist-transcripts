@@ -7,6 +7,7 @@ param(
     [string] $Langs = 'en,ko',
     [string] $Since,
     [int] $Limit,
+    [string] $TranslateTo,
     [double] $DelayMin = 0.5,
     [double] $DelayMax = 2.0,
     [switch] $Force,
@@ -37,6 +38,7 @@ $argsForRunner = @(
 if ($OutputDirectory) { $argsForRunner += @('--output', $OutputDirectory) }
 if ($Limit -gt 0) { $argsForRunner += @('--limit', "$Limit") }
 if ($Since) { $argsForRunner += @('--since', $Since) }
+if ($TranslateTo) { $argsForRunner += @('--translate-to', $TranslateTo) }
 if ($Force) { $argsForRunner += '--force' }
 if ($AdditionalArgs) { $argsForRunner += $AdditionalArgs }
 

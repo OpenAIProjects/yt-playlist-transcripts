@@ -133,8 +133,9 @@ flagged.
 
 `run.ps1`, `run.sh`, and `run_research.py` run the channel workflow: enumerate
 the channel's `/videos` page, extract or resume transcripts, identify
-transcripts without a summary, call `codex exec` once per video, update a
-cross-video report, and write an index and failure list. The transcript
+transcripts without a summary, optionally create translated copies, summarize
+videos with `codex exec`, update a cross-video report, and write an index and
+failure list. The transcript
 extractor's existing `manifest.json` remains the source of truth for extraction
 status. The PowerShell and Bash scripts are convenient wrappers around the
 Python runner. Each successful invocation prints the matching command syntax
@@ -162,6 +163,13 @@ For example, set a custom output folder and cap the run at five videos:
   -Since "-1" -OutputDirectory ".\output\example" -Limit 5
 ```
 
+Add `-TranslateTo cn` to generate a Simplified Chinese copy of each available
+transcript using Codex:
+
+```powershell
+.\run.ps1 -Channel "@example" -Since "-1" -Limit 5 -TranslateTo cn
+```
+
 Bash:
 
 ```bash
@@ -181,6 +189,12 @@ bash ./run.sh --channel "https://www.youtube.com/@example/videos" \
   --since -1 --output ./output/example --limit 5
 ```
 
+Add `--translate-to cn` to generate Simplified Chinese transcript copies:
+
+```bash
+bash ./run.sh --channel "@example" --since -1 --limit 5 --translate-to cn
+```
+
 Run the shared Python entry point directly when preferred:
 
 ```bash
@@ -188,29 +202,37 @@ python run_research.py --channel "https://www.youtube.com/@example/videos" \
   --since 2026-10-19 --output ./output/example --limit 5
 ```
 
+The Python runner also accepts `--translate-to cn`.
+
 The `--channel` / `-Channel` value can be a `/videos` URL or a shorthand such
 as `@example`; the runner expands the shorthand to
 `https://www.youtube.com/@example/videos`. Use the exact channel handle with
 no spaces (for example, `@tomnashtv`), not its display name. `-Since` / `--since`
 includes videos uploaded on or after the given date. Supply an ISO date (`2026-10-19`)
 or an integer offset from today: `-1` means yesterday, `0` means today, and
-`-7` means seven days ago. Date filtering fully resolves channel video metadata
-so upload dates are available; entries with no usable upload date are listed
-as failures instead of being silently included or excluded.
+`-7` means seven days ago. For channels, date filtering checks newest videos
+first and stops at the date cutoff (or once `--limit` matching videos are
+found), with the configured delay between metadata lookups. Entries whose
+upload dates cannot be determined are listed as failures.
 
 All three launchers (`run.ps1`, `run.sh`, and `run_research.py`) show the same
-pipeline progress. Enumeration displays an activity spinner while YouTube is
-responding; transcript extraction and Codex summaries show per-item progress
-bars, and long-running summary/report generation displays an activity spinner.
+pipeline progress. Enumeration displays an activity spinner and elapsed time
+while YouTube is responding (with periodic heartbeat lines when output is
+captured); transcript extraction and Codex summaries show per-item progress
+bars, and long-running translation, summary, and report generation displays an
+activity spinner.
 Members-only videos are skipped; they do not stop channel enumeration or enter
 the transcript and summary steps.
 
 PowerShell supports `-OutputDirectory`, `-Langs`, `-Limit`, `-DelayMin`,
-`-DelayMax`, `-Since`, and `-Force`; it also forwards additional Python-style
+`-DelayMax`, `-Since`, `-TranslateTo`, and `-Force`; it also forwards additional Python-style
 flags such as `--limit 3`. Long flags are case-insensitive (`--Limit` and
 `--limit` are equivalent). The Bash wrapper and Python runner support
-`--output`, `--langs`, `--limit`, `--delay-min`, `--delay-max`, `--since`, and
-`--force`. Without an explicit output directory, files go to
+`--output`, `--langs`, `--limit`, `--delay-min`, `--delay-max`, `--since`,
+`--translate-to`, and `--force`. Translated copies are saved under
+`translations/` using the language suffix (for example,
+`translations/01-video.cn.md`). `cn` selects Simplified Chinese. Summaries continue to use the original
+transcript. Without an explicit output directory, files go to
 `transcripts/@<channel-handle>/` (for example, `transcripts/@example/`). The
 pipeline writes `INDEX.md`, `FAILURES.md`,
 `RESEARCH.md`, and individual summaries under `summaries/`. Failed Codex
