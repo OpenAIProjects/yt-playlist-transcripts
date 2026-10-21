@@ -56,6 +56,20 @@ def translation_language_slug(language: str) -> str:
     return re.sub(r"[^\w.-]+", "-", language.strip(), flags=re.UNICODE).strip("-._")
 
 
+def print_command_usage(launcher: str | None) -> None:
+    if launcher == "powershell":
+        usage = r"Usage: .\run.ps1 -Channel <channel-url|@handle> [-Since <YYYY-MM-DD|-1|0>] [-OutputDirectory <dir>] [-Limit N] [-TranslateTo LANGUAGE] [-Force]"
+        options = "Options: -Since filters inclusively by upload date; -1 means yesterday and 0 means today. -OutputDirectory sets the result folder; -Langs sets caption priority; -Limit caps videos; -TranslateTo creates translated transcript copies; -Force re-extracts and regenerates outputs."
+    elif launcher == "bash":
+        usage = "Usage: bash ./run.sh --channel <channel-url|@handle> [--since YYYY-MM-DD|-1|0] [--output DIR] [--limit N] [--translate-to LANGUAGE] [--force]"
+        options = "Options: --since filters inclusively by upload date; -1 means yesterday and 0 means today. --output sets the result folder; --langs sets caption priority; --limit caps videos; --translate-to creates translated transcript copies; --force re-extracts and regenerates outputs."
+    else:
+        usage = "Usage: python run_research.py --channel <channel-url|@handle> [--since YYYY-MM-DD|-1|0] [--output DIR] [--limit N] [--translate-to LANGUAGE] [--force]"
+        options = "Options: --since filters inclusively by upload date; -1 means yesterday and 0 means today. --output sets the result folder; --langs sets caption priority; --limit caps videos; --translate-to creates translated transcript copies; --force re-extracts and regenerates outputs."
+    print(usage, flush=True)
+    print(options, flush=True)
+
+
 def save_manifest(path: Path, manifest: dict) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -179,6 +193,12 @@ def write_failures(output: Path, manifest: dict, errors: list[tuple[str, str]]) 
 
 
 def main() -> int:
+    launcher = os.environ.get("YT_RESEARCH_LAUNCHER")
+    raw_args = normalize_long_options(sys.argv[1:])
+    if not raw_args:
+        print_command_usage(launcher)
+        return 0
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--channel", required=True, help="YouTube channel /videos URL or @handle")
     parser.add_argument("--output", type=Path, help="Output folder (default: transcripts/@<channel-handle>)")
@@ -198,21 +218,12 @@ def main() -> int:
         help="Include videos uploaded on/after YYYY-MM-DD or a day offset (-1=yesterday, 0=today)",
     )
     parser.add_argument("--force", action="store_true", help="Re-extract transcripts and regenerate summaries")
-    args = parser.parse_args(normalize_long_options(sys.argv[1:]))
+    args = parser.parse_args(raw_args)
     try:
         args.channel = normalize_channel(args.channel)
     except ValueError as exc:
         parser.error(str(exc))
 
-    launcher = os.environ.get("YT_RESEARCH_LAUNCHER")
-    if launcher == "powershell":
-        usage = r"Usage: .\run.ps1 -Channel <channel-url|@handle> [-Since <YYYY-MM-DD|-1|0>] [-OutputDirectory <dir>] [-Limit N] [-TranslateTo LANGUAGE] [-Force]"
-    elif launcher == "bash":
-        usage = "Usage: bash ./run.sh --channel <channel-url|@handle> [--since YYYY-MM-DD|-1|0] [--output DIR] [--limit N] [--translate-to LANGUAGE] [--force]"
-    else:
-        usage = "Usage: python run_research.py --channel <channel-url|@handle> [--since YYYY-MM-DD|-1|0] [--output DIR] [--limit N] [--translate-to LANGUAGE] [--force]"
-    print(usage, flush=True)
-    print("Options: --since filters inclusively by upload date; negative day offsets count back from today (-1 yesterday, 0 today). --output sets the result folder; --langs sets caption priority; --limit caps videos; --translate-to creates translated transcript copies; --force re-extracts and regenerates outputs.", flush=True)
     if args.translate_to and not translation_language_slug(args.translate_to):
         parser.error("--translate-to must contain a language name or code, for example cn or Spanish")
 

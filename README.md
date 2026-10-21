@@ -138,8 +138,9 @@ videos with `codex exec`, update a cross-video report, and write an index and
 failure list. The transcript
 extractor's existing `manifest.json` remains the source of truth for extraction
 status. The PowerShell and Bash scripts are convenient wrappers around the
-Python runner. Each successful invocation prints the matching command syntax
-and a short option guide before starting the workflow.
+Python runner. Each launcher prints its command syntax and a short option guide
+when invoked without parameters; runs with parameters go straight to the
+workflow progress.
 
 Requirements: Python 3.10+ with this project installed (`pip install -e .`),
 and the Codex CLI available as `codex` on `PATH`.

@@ -1,0 +1,59 @@
+{
+  "videos": {
+    "oE4npbB597U": {
+      "playlist_index": 1,
+      "title": "阿省公投揭晓，75%选择留下！最大的输家原来是她..",
+      "url": "https://www.youtube.com/watch?v=oE4npbB597U",
+      "channel": "大伟探秘加拿大",
+      "duration_sec": 818,
+      "upload_date": "20261020",
+      "status": "done",
+      "source": "manual",
+      "language_code": "zh-Hans",
+      "rolling_dedup_applied": false,
+      "block_count": 11,
+      "segment_count": 431,
+      "md_file": "01-oE4npbB597U-a-sheng-gong-tou-jie-xiao-75-xuan-ze-liu-xia-zui-da-de-shu-j.md",
+      "raw_file": "01-oE4npbB597U-a-sheng-gong-tou-jie-xiao-75-xuan-ze-liu-xia-zui-da-de-shu-j.raw.json"
+    },
+    "MTOxw-DyhGo": {
+      "playlist_index": 2,
+      "title": "阿省全民公投正式开始！一次看懂10个公投问题",
+      "url": "https://www.youtube.com/watch?v=MTOxw-DyhGo",
+      "channel": "大伟探秘加拿大",
+      "duration_sec": 1563,
+      "upload_date": "20261014",
+      "status": "done",
+      "source": "manual",
+      "language_code": "zh-Hans",
+      "rolling_dedup_applied": false,
+      "block_count": 21,
+      "segment_count": 816,
+      "md_file": "02-MTOxw-DyhGo-a-sheng-quan-min-gong-tou-zheng-shi-kai-shi-yi-ci-kan-dong-1.md",
+      "raw_file": "02-MTOxw-DyhGo-a-sheng-quan-min-gong-tou-zheng-shi-kai-shi-yi-ci-kan-dong-1.raw.json"
+    },
+    "aN3lnifSfJs": {
+      "playlist_index": 3,
+      "title": "魁北克政坛变天！独立派上台，第三次公投会来吗？",
+      "url": "https://www.youtube.com/watch?v=aN3lnifSfJs",
+      "channel": "大伟探秘加拿大",
+      "duration_sec": 1114,
+      "upload_date": "20261007",
+      "status": "done",
+      "source": "manual",
+      "language_code": "zh-Hans",
+      "rolling_dedup_applied": false,
+      "block_count": 15,
+      "segment_count": 558,
+      "md_file": "03-aN3lnifSfJs-kui-bei-ke-zheng-tan-bian-tian-du-li-pai-shang-tai-di-san-ci.md",
+      "raw_file": "03-aN3lnifSfJs-kui-bei-ke-zheng-tan-bian-tian-du-li-pai-shang-tai-di-san-ci.raw.json"
+    }
+  },
+  "playlist": {
+    "id": "UCYPbnu_BBQIPJamnZuTNTzw",
+    "title": "大伟探秘加拿大 - Videos",
+    "url": "https://www.youtube.com/@大伟探秘加拿大/videos",
+    "uploader": "大伟探秘加拿大",
+    "video_count": 207
+  }
+}

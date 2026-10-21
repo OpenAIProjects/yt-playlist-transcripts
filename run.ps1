@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true, Position = 0)]
+    [Parameter(Position = 0)]
     [string] $Channel,
 
     [string] $OutputDirectory,
@@ -17,6 +17,13 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ($PSBoundParameters.Count -eq 0 -and $AdditionalArgs.Count -eq 0) {
+    Write-Output 'Usage: .\run.ps1 -Channel <channel-url|@handle> [-Since <YYYY-MM-DD|-1|0>] [-OutputDirectory <dir>] [-Limit N] [-TranslateTo LANGUAGE] [-Force]'
+    Write-Output 'Options: -Since filters inclusively by upload date; -1 means yesterday and 0 means today. -OutputDirectory sets the result folder; -Langs sets caption priority; -Limit caps videos; -TranslateTo creates translated transcript copies; -Force re-extracts and regenerates outputs.'
+    exit 0
+}
+
 $repoRoot = $PSScriptRoot
 $venvPython = Join-Path $repoRoot '.venv\Scripts\python.exe'
 if (Test-Path $venvPython) {
