@@ -34,6 +34,7 @@ from tenacity import (
 )
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError, ExtractorError
+from .date_utils import parse_since, parse_upload_date
 
 
 # ---------------------------------------------------------------------------
@@ -270,7 +271,9 @@ def _download_one_track(
     retry=retry_if_exception_type(TransientError),
     reraise=True,
 )
-def fetch_video_subs(video_id: str, langs: list[str], work_dir: Path) -> dict:
+def fetch_video_subs(
+    video_id: str, langs: list[str], work_dir: Path, info: dict | None = None
+) -> dict:
     """
     Two-call flow: discover → download only the chosen language.
     Avoids yt-dlp attempting translated tracks for langs that aren't actually present
@@ -280,13 +283,14 @@ def fetch_video_subs(video_id: str, langs: list[str], work_dir: Path) -> dict:
     Raises TranscriptNotFound if no caption track in any preferred language.
     Raises TransientError for transient network errors (caller retries).
     """
-    try:
-        info = _discover_tracks(video_id)
-    except DownloadError as e:
-        msg = str(e).lower()
-        if any(s in msg for s in ("timed out", "timeout", "connection", "temporarily")) or "429" in msg:
-            raise TransientError(str(e)) from e
-        raise
+    if info is None:
+        try:
+            info = _discover_tracks(video_id)
+        except DownloadError as e:
+            msg = str(e).lower()
+            if any(s in msg for s in ("timed out", "timeout", "connection", "temporarily")) or "429" in msg:
+                raise TransientError(str(e)) from e
+            raise
 
     manual_keys = list((info.get("subtitles") or {}).keys())
     auto_dict = info.get("automatic_captions") or {}
@@ -520,9 +524,9 @@ def write_readme(output_dir: Path, manifest: dict) -> None:
 # ---------------------------------------------------------------------------
 # Playlist enumeration
 
-def enumerate_playlist(url: str) -> dict:
+def enumerate_playlist(url: str, resolve_entries: bool = False) -> dict:
     opts = {
-        "extract_flat": "in_playlist",
+        "extract_flat": False if resolve_entries else "in_playlist",
         "skip_download": True,
         "quiet": True,
         "no_warnings": True,
@@ -570,6 +574,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--start", type=int, default=1, help="Start at this playlist index (1-based)")
     p.add_argument("--delay-min", type=float, default=0.5)
     p.add_argument("--delay-max", type=float, default=2.0)
+    p.add_argument(
+        "--since",
+        type=parse_since,
+        default=None,
+        metavar="DATE|DAYS",
+        help="Include videos uploaded on/after YYYY-MM-DD or a day offset (e.g. -1=yesterday, 0=today)",
+    )
     args = p.parse_args(argv)
 
     langs = [s.strip() for s in args.langs.split(",") if s.strip()]
@@ -579,15 +590,36 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"Enumerating: {args.url}", file=sys.stderr)
     try:
-        pl = enumerate_playlist(args.url)
+        pl = enumerate_playlist(args.url, resolve_entries=args.since is not None)
     except Exception as e:
         print(f"ERROR: enumeration failed: {e}", file=sys.stderr)
         return 1
 
     pl_id = pl.get("id") or hashlib.md5(args.url.encode()).hexdigest()[:10]
     pl_title = pl.get("title", "playlist")
-    entries = pl.get("entries") or []
-    print(f"Playlist '{pl_title}' has {len(entries)} videos", file=sys.stderr)
+    all_entries = pl.get("entries") or []
+    for position, entry in enumerate(all_entries, start=1):
+        if entry and not entry.get("playlist_index"):
+            entry["playlist_index"] = position
+    entries = all_entries
+    print(f"Playlist '{pl_title}' has {len(all_entries)} videos", file=sys.stderr)
+    if args.since is not None:
+        selected = []
+        unknown_dates = []
+        for entry in all_entries:
+            if not entry:
+                continue
+            upload_date = parse_upload_date(entry)
+            if upload_date is None:
+                unknown_dates.append(entry)
+            elif upload_date >= args.since:
+                selected.append(entry)
+        entries = selected
+        print(
+            f"Since {args.since.isoformat()}: {len(entries)} video(s) match; "
+            f"{len(unknown_dates)} have no usable upload date",
+            file=sys.stderr,
+        )
 
     output_dir = (
         Path(args.output).expanduser().resolve()
@@ -605,15 +637,34 @@ def main(argv: list[str] | None = None) -> int:
         "title": pl_title,
         "url": args.url,
         "uploader": pl.get("uploader"),
-        "video_count": len(entries),
+        "video_count": len(all_entries),
     }
+    if args.since is not None:
+        manifest["playlist"]["since"] = args.since.isoformat()
+    else:
+        manifest["playlist"].pop("since", None)
     save_manifest(manifest_path, manifest)
+
+    if args.since is not None:
+        for entry in all_entries:
+            if not entry or parse_upload_date(entry) is not None:
+                continue
+            vid_id = entry.get("id")
+            if not vid_id:
+                continue
+            idx = entry.get("playlist_index", "?")
+            manifest["videos"][vid_id] = {
+                "playlist_index": idx,
+                "title": entry.get("title") or vid_id,
+                "url": entry.get("url") or f"https://www.youtube.com/watch?v={vid_id}",
+                "status": Status.FAILED_UNEXPECTED,
+                "error": f"Since filter {args.since.isoformat()} could not be applied: upload date is unavailable",
+            }
+        save_manifest(manifest_path, manifest)
 
     processed = 0
     for entry in entries:
-        idx = entry.get("playlist_index")
-        if idx is None:
-            idx = entries.index(entry) + 1
+        idx = entry.get("playlist_index") or 1
         if idx < args.start:
             continue
         if args.limit and processed >= args.limit:
@@ -623,7 +674,7 @@ def main(argv: list[str] | None = None) -> int:
         vid_id = entry["id"]
         title = entry.get("title") or vid_id
         url = entry.get("url") or f"https://www.youtube.com/watch?v={vid_id}"
-        prefix = f"[{idx}/{len(entries)}] {vid_id}"
+        prefix = f"[{idx}/{len(all_entries)}] {vid_id}"
 
         existing = existing_md_for(vid_id, output_dir)
         if existing and not args.force:
@@ -634,12 +685,16 @@ def main(argv: list[str] | None = None) -> int:
                 "url": url,
                 "status": Status.SKIPPED_EXISTING,
                 "md_file": existing.name,
+                "upload_date": entry.get("upload_date"),
             }
             save_manifest(manifest_path, manifest)
             continue
 
         try:
-            result = fetch_video_subs(vid_id, langs, work_dir)
+            result = fetch_video_subs(
+                vid_id, langs, work_dir,
+                info=entry if args.since is not None else None,
+            )
         except TranscriptNotFound:
             print(f"{prefix} no transcript", file=sys.stderr)
             manifest["videos"][vid_id] = {
